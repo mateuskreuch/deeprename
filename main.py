@@ -1,3 +1,4 @@
+from difflib import ndiff
 from pathlib import Path
 from rich import print
 from rich.live import Live
@@ -51,12 +52,21 @@ def is_binary(file_path: Path):
     except IOError:
         return True
 
+class FileIsBinaryError(Exception):
+    pass
+
+class PathIsDirectoryError(Exception):
+    pass
+
 def rename_in_file(file_path: Path):
-    if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
-        raise AssertionError("[red]File size exceeds maximum limit[/]")
+    if not file_path.is_file():
+        raise PathIsDirectoryError()
 
     if is_binary(file_path):
-        raise AssertionError("[bright_black]File is binary[/]")
+        raise FileIsBinaryError()
+
+    if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
+        raise AssertionError("File size exceeds maximum limit")
 
     content = file_path.read_text(encoding='utf-8')
     new_content = case_preserving_rename(content)
@@ -80,41 +90,71 @@ def no_hidden_flat_walk(path: Path):
 
     return file_objects
 
+def rich_diff(old: str, new: str):
+    if old == new:
+        return str(old)
+
+    diff = list(ndiff(str(old), str(new)))
+    result = []
+
+    for d in diff:
+        code = d[0]
+        char = d[2]
+
+        if code == ' ':
+            result.append(char)
+
+        elif code == '-':
+            result.append(f"[red]{char}[/red]")
+
+        elif code == '+':
+            result.append(f"[green]{char}[/green]")
+
+    return "".join(result)
+
 def main(root_dir: Path):
     table = Table()
 
+    table.add_column("Type")
     table.add_column("Path")
-    table.add_column("Action")
-    table.add_column("Info")
+    table.add_column("Errors")
 
     with Live(table, auto_refresh=False) as live:
         for old_path in no_hidden_flat_walk(root_dir):
             new_path = old_path.parent / case_preserving_rename(old_path.name)
             relative_old_path = old_path.relative_to(root_dir)
             relative_new_path = new_path.relative_to(root_dir)
-
-            if old_path.is_file():
-                try:
-                    rename_in_file(old_path)
-                    table.add_row(f"[yellow]{relative_old_path}[/]", "[green]Renamed[/]", "[green]Contents[/]")
-
-                except AssertionError as e:
-                    table.add_row(f"[bright_black]{relative_old_path}[/]", "-", f"{e}")
-
-            if old_path == new_path:
-                continue
-
-            if new_path.exists():
-                table.add_row(f"{relative_old_path}", "[red]Renamed[/]", f"[red]{relative_new_path} (conflict)[/]")
-                continue
+            type_text = ""
+            errors = []
 
             try:
-                os.rename(old_path, new_path)
-                table.add_row(f"[yellow]{relative_old_path}[/]", "[green]Renamed[/]", f"[green]{relative_new_path}[/]")
+                rename_in_file(old_path)
+                type_text = "[yellow]File[/]"
 
-            except OSError as e:
-                table.add_row(f"{relative_old_path}", f"[red]Renamed[/]", "[red]OS failed[/]")
+            except PathIsDirectoryError:
+                type_text = "[bright_black]Directory[/]"
 
+            except FileIsBinaryError:
+                type_text = "[bright_black]File (binary)[/]"
+
+            except AssertionError as e:
+                type_text = "[bright_black]File[/]"
+
+                if str(e):
+                    errors.append(str(e))
+
+            if old_path != new_path:
+                if new_path.exists():
+                    errors.append(f"{relative_new_path} (conflict)")
+
+                else:
+                    try:
+                        os.rename(old_path, new_path)
+
+                    except OSError as e:
+                        errors.append("OS failed")
+
+            table.add_row(type_text, rich_diff(relative_old_path, relative_new_path), "[red]" + "; ".join(errors) + "[/]")
             live.update(table)
 
 if __name__ == "__main__":
