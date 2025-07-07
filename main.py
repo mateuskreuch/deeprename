@@ -1,47 +1,14 @@
+from replacer import CaseAwareReplacer
 from difflib import ndiff
 from pathlib import Path
 from rich import print
 from rich.live import Live
 from rich.table import Table
-import os, re, sys
+import os, sys
 
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 
-old_str = None
-new_str = None
-
-def case_preserving_rename(base_str: str):
-    def replacer(match):
-        original_match_value = match.group(0)
-        replacement_value = []
-
-        old_len = len(old_str)
-        new_len = len(new_str)
-
-        for i in range(min(old_len, new_len)):
-            original_char = original_match_value[i]
-            new_char_base = new_str[i]
-
-            if original_char.isupper():
-                replacement_value.append(new_char_base.upper())
-
-            elif original_char.islower():
-                replacement_value.append(new_char_base.lower())
-
-            else:
-                replacement_value.append(new_char_base)
-
-        if new_len > old_len:
-            replacement_value.append(new_str[old_len:])
-
-        return "".join(replacement_value)
-
-    old_str_re = re.compile(re.escape(old_str), re.IGNORECASE)
-
-    if not old_str_re.search(base_str):
-        return base_str
-
-    return old_str_re.sub(replacer, base_str)
+replacer = None
 
 def is_binary(file_path: Path):
     try:
@@ -69,7 +36,7 @@ def rename_in_file(file_path: Path):
         raise AssertionError("File size exceeds maximum limit")
 
     content = file_path.read_text(encoding='utf-8')
-    new_content = case_preserving_rename(content)
+    new_content = replacer.replace(content)
 
     if content == new_content:
         raise AssertionError()
@@ -86,7 +53,7 @@ def no_hidden_flat_walk(path: Path):
                         [root_path / d for d in dir_names]
 
     # Sort in a way so that no conflicts occur
-    file_objects.sort(key=lambda x: (len(x.parts), len(x.name) * (len(new_str) - len(old_str))), reverse=True)
+    file_objects.sort(key=lambda x: (len(x.parts), len(x.name) * replacer.part_difference()), reverse=True)
 
     return file_objects
 
@@ -121,7 +88,7 @@ def main(root_dir: Path):
 
     with Live(table, auto_refresh=False) as live:
         for old_path in no_hidden_flat_walk(root_dir):
-            new_path = old_path.parent / case_preserving_rename(old_path.name)
+            new_path = old_path.parent / replacer.replace(old_path.name)
             relative_old_path = old_path.relative_to(root_dir)
             relative_new_path = new_path.relative_to(root_dir)
             type_text = ""
@@ -173,5 +140,7 @@ if __name__ == "__main__":
     if old_str == new_str:
         print("[red]Old and new are the same. No actions will be taken.[/]")
         sys.exit(1)
+
+    replacer = CaseAwareReplacer(old_str, new_str)
 
     main(Path(os.getcwd()))
