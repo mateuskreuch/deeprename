@@ -30,9 +30,10 @@ class FileIsBinaryError(Exception):
     pass
 
 class CaseAwareReplacer:
-    def __init__(self, old_str, new_str, dry_run=True):
+    def __init__(self, old_str, new_str, dry_run=False):
         self._old = old_str.split('/')
         self._new = new_str.split('/')
+        self._replacements = {}
         self._dry_run = dry_run
         self._pattern = re.compile(RE_BOUNDARIES.join([f"({x})" for x in self._old]), re.IGNORECASE)
 
@@ -40,9 +41,13 @@ class CaseAwareReplacer:
     def len_difference(self):
        return len(self._new) - len(self._old)
 
+    def get_replacements_made(self):
+        return self._replacements
+
     def replace(self, base_str: str):
         def replacer(match):
             parts = match.groups()
+            old_str = ''.join(parts)
             separators = parts[1:len(self._new):2]
             parts = parts[0::2]
             # TODO: on numbers, match the case of the previous word, if first word, keep as inputted
@@ -53,8 +58,11 @@ class CaseAwareReplacer:
 
             buffer = itertools.zip_longest(buffer, separators, fillvalue=separators[-1])
             buffer = itertools.chain.from_iterable(buffer)
+            new_str = ''.join(list(buffer)[:-1])
 
-            return ''.join(list(buffer)[:-1])
+            self._replacements[old_str] = new_str
+
+            return new_str
 
         return self._pattern.sub(replacer, base_str)
 

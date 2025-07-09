@@ -4,8 +4,9 @@ from rich import print
 from rich_differ import rich_diff
 from rich.live import Live
 from rich.table import Table
-import os, sys
+import os, typer
 
+app = typer.Typer()
 replacer = None
 
 def get_all_paths_to_replace(path: Path):
@@ -22,18 +23,43 @@ def get_all_paths_to_replace(path: Path):
 
     return file_objects
 
-def main(root_dir: Path):
-    table = Table()
+@app.command()
+def drename(
+    old: str,
+    new: str,
+    dry: bool = typer.Option(False, help="Perform a dry run without making changes"),
+    path: Path = typer.Argument(Path.cwd(), help="Root directory to process")
+):
+    """
+    Replace OLD with NEW in file names, directories, and file contents while respecting case:\n
+    \n
+        OLD = test/my/user | NEW = wow/very/nice\n
+    \n
+    Will replace, for example:\n
+    \n
+        test_My_USER -> wow_Very_NICE\n
+        test-_my-user -> wow-_very-nice\n
+        testMyUser -> wowVeryNice\n
+        TEST_MY_USER -> WOW_VERY_NICE\n
+    """
+    global replacer
 
+    if old == new:
+        print("[red]Old and new are the same. No actions will be taken.[/]")
+        raise typer.Exit(code=1)
+
+    replacer = CaseAwareReplacer(old, new, dry_run=dry)
+
+    table = Table()
     table.add_column("Type")
     table.add_column("Path")
     table.add_column("Errors")
 
     with Live(table, auto_refresh=False) as live:
-        for old_path in get_all_paths_to_replace(root_dir):
+        for old_path in get_all_paths_to_replace(path):
             new_path = replacer.replace_path(old_path)
-            relative_old_path = old_path.relative_to(root_dir)
-            relative_new_path = new_path.relative_to(root_dir)
+            relative_old_path = old_path.relative_to(path)
+            relative_new_path = new_path.relative_to(path)
             type_text = ""
             errors = []
 
@@ -56,32 +82,21 @@ def main(root_dir: Path):
             try:
                 replacer.rename_file(old_path)
 
-            except FileExistsError as e:
+            except FileExistsError:
                 errors.append(f"{relative_new_path} (conflict)")
 
-            except OSError as e:
-                errors.append(f"OS failed")
+            except OSError:
+                errors.append("OS failed")
 
-            table.add_row(type_text, rich_diff(relative_old_path, relative_new_path), "[red]" + "; ".join(errors) + "[/]")
+            table.add_row(
+                type_text,
+                rich_diff(str(relative_old_path), str(relative_new_path)),
+                "[red]" + "; ".join(errors) + "[/]"
+            )
             live.update(table)
 
+    for old_str, new_str in replacer.get_replacements_made().items():
+        print(f"{old_str} -> {new_str}")
+
 if __name__ == "__main__":
-    arguments = sys.argv[1:]
-
-    if "--help" in arguments or len(arguments) != 2:
-        print("[bold]Usage:[/]\n"
-              "  drename old new\n\n"
-              "[bold]Options:[/]\n"
-              "  --help           Show this help message\n")
-        sys.exit(0)
-
-    old_str = arguments[0]
-    new_str = arguments[1]
-
-    if old_str == new_str:
-        print("[red]Old and new are the same. No actions will be taken.[/]")
-        sys.exit(1)
-
-    replacer = CaseAwareReplacer(old_str, new_str)
-
-    main(Path(os.getcwd()))
+    app()
