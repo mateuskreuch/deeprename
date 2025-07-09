@@ -95,8 +95,14 @@ def drename(
             )
             live.update(table)
 
+    table = Table()
+    table.add_column("Old")
+    table.add_column("New")
+
     for old_str, new_str in replacer.get_replacements_made().items():
-        print(f"{old_str} -> {new_str}")
+        table.add_row(old_str, new_str)
+
+    print(table)
 
 if __name__ == "__main__":
     app()
