@@ -1,33 +1,51 @@
+import os
+from pathlib import Path
 import re, functools, itertools
 
+MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
 RE_BOUNDARIES = r'([_-]+|(?<=[a-z0-9])(?=[A-Z]))'
 
 @functools.cache
 def matchcase(a, b):
-   if a.isupper():
-      return b.upper()
-   elif a.islower():
-      return b[0].lower() + b[1:] # Keep as inputted
-   else:
-      return b[0].upper() + b[1:] # Keep as inputted
+    if a.isupper():
+        return b.upper()
+    elif a[0].isupper():
+        return b[0].upper() + b[1:] # Keep as inputted
+    else:
+        return b[0].lower() + b[1:] # Keep as inputted
 
 def safe_get(lst, i):
-   return lst[min(i, len(lst) - 1)]
+    return lst[min(i, len(lst) - 1)]
+
+def is_binary(file_path: Path):
+    try:
+        with open(file_path, 'rb') as f:
+            chunk = f.read(1024)
+            return b'\x00' in chunk
+
+    except IOError:
+        return True
+
+class FileIsBinaryError(Exception):
+    pass
 
 class CaseAwareReplacer:
-    def __init__(self, old_str, new_str):
+    def __init__(self, old_str, new_str, dry_run=True):
         self._old = old_str.split('/')
         self._new = new_str.split('/')
-        self._pattern = re.compile(RE_BOUNDARIES.join([f"{x}" for x in self._old]), re.IGNORECASE)
+        self._dry_run = dry_run
+        self._pattern = re.compile(RE_BOUNDARIES.join([f"({x})" for x in self._old]), re.IGNORECASE)
 
-    def part_difference(self):
+    @functools.cache
+    def len_difference(self):
        return len(self._new) - len(self._old)
 
     def replace(self, base_str: str):
         def replacer(match):
-            parts = re.split(RE_BOUNDARIES, match.group(0))
+            parts = match.groups()
             separators = parts[1:len(self._new):2]
             parts = parts[0::2]
+            # TODO: on numbers, match the case of the previous word, if first word, keep as inputted
             buffer = [matchcase(safe_get(parts, i), x) for i, x in enumerate(self._new)]
 
             if not separators:
@@ -39,3 +57,35 @@ class CaseAwareReplacer:
             return ''.join(list(buffer)[:-1])
 
         return self._pattern.sub(replacer, base_str)
+
+    def replace_file_contents(self, file_path: Path):
+        if not file_path.is_file():
+            raise IsADirectoryError()
+
+        if is_binary(file_path):
+            raise FileIsBinaryError()
+
+        if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
+            raise AssertionError("File size exceeds maximum limit")
+
+        content = file_path.read_text(encoding='utf-8')
+        new_content = self.replace(content)
+
+        if content == new_content:
+            raise AssertionError()
+
+        if not self._dry_run:
+            file_path.write_text(new_content, encoding='utf-8')
+
+    def replace_path(self, old_path: Path):
+        return old_path.parent / self.replace(old_path.name)
+
+    def rename_file(self, old_path: Path):
+        new_path = self.replace_path(old_path)
+
+        if old_path != new_path:
+            if new_path.exists():
+                raise FileExistsError(new_path)
+
+            elif not self._dry_run:
+                os.rename(old_path, new_path)

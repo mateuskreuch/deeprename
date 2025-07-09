@@ -1,83 +1,26 @@
-from replacer import CaseAwareReplacer
-from difflib import ndiff
 from pathlib import Path
+from replacer import CaseAwareReplacer, FileIsBinaryError
 from rich import print
+from rich_differ import rich_diff
 from rich.live import Live
 from rich.table import Table
 import os, sys
 
-MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
-
 replacer = None
 
-def is_binary(file_path: Path):
-    try:
-        with open(file_path, 'rb') as f:
-            chunk = f.read(1024)
-            return b'\x00' in chunk
-
-    except IOError:
-        return True
-
-class FileIsBinaryError(Exception):
-    pass
-
-class PathIsDirectoryError(Exception):
-    pass
-
-def rename_in_file(file_path: Path):
-    if not file_path.is_file():
-        raise PathIsDirectoryError()
-
-    if is_binary(file_path):
-        raise FileIsBinaryError()
-
-    if file_path.stat().st_size > MAX_FILE_SIZE_BYTES:
-        raise AssertionError("File size exceeds maximum limit")
-
-    content = file_path.read_text(encoding='utf-8')
-    new_content = replacer.replace(content)
-
-    if content == new_content:
-        raise AssertionError()
-
-    file_path.write_text(new_content, encoding='utf-8')
-
-def no_hidden_flat_walk(path: Path):
+def get_all_paths_to_replace(path: Path):
     file_objects: list[Path] = []
 
     for root_str, dir_names, file_names in os.walk(path):
         dir_names[:] = [d for d in dir_names if not d.startswith('.')]
         root_path = Path(root_str)
-        file_objects += [root_path / f for f in file_names if not f.startswith('.')] + \
-                        [root_path / d for d in dir_names]
+        file_objects += [root_path / f for f in file_names if not f.startswith('.')] \
+                      + [root_path / d for d in dir_names]
 
     # Sort in a way so that no conflicts occur
-    file_objects.sort(key=lambda x: (len(x.parts), len(x.name) * replacer.part_difference()), reverse=True)
+    file_objects.sort(key=lambda x: (len(x.parts), len(x.name) * replacer.len_difference()), reverse=True)
 
     return file_objects
-
-def rich_diff(old: str, new: str):
-    if old == new:
-        return str(old)
-
-    diff = list(ndiff(str(old), str(new)))
-    result = []
-
-    for d in diff:
-        code = d[0]
-        char = d[2]
-
-        if code == ' ':
-            result.append(char)
-
-        elif code == '-':
-            result.append(f"[red]{char}[/red]")
-
-        elif code == '+':
-            result.append(f"[green]{char}[/green]")
-
-    return "".join(result)
 
 def main(root_dir: Path):
     table = Table()
@@ -87,18 +30,18 @@ def main(root_dir: Path):
     table.add_column("Errors")
 
     with Live(table, auto_refresh=False) as live:
-        for old_path in no_hidden_flat_walk(root_dir):
-            new_path = old_path.parent / replacer.replace(old_path.name)
+        for old_path in get_all_paths_to_replace(root_dir):
+            new_path = replacer.replace_path(old_path)
             relative_old_path = old_path.relative_to(root_dir)
             relative_new_path = new_path.relative_to(root_dir)
             type_text = ""
             errors = []
 
             try:
-                rename_in_file(old_path)
+                replacer.replace_file_contents(old_path)
                 type_text = "[yellow]File[/]"
 
-            except PathIsDirectoryError:
+            except IsADirectoryError:
                 type_text = "[bright_black]Directory[/]"
 
             except FileIsBinaryError:
@@ -110,16 +53,14 @@ def main(root_dir: Path):
                 if str(e):
                     errors.append(str(e))
 
-            if old_path != new_path:
-                if new_path.exists():
-                    errors.append(f"{relative_new_path} (conflict)")
+            try:
+                replacer.rename_file(old_path)
 
-                else:
-                    try:
-                        os.rename(old_path, new_path)
+            except FileExistsError as e:
+                errors.append(f"{relative_new_path} (conflict)")
 
-                    except OSError as e:
-                        errors.append("OS failed")
+            except OSError as e:
+                errors.append(f"OS failed")
 
             table.add_row(type_text, rich_diff(relative_old_path, relative_new_path), "[red]" + "; ".join(errors) + "[/]")
             live.update(table)
