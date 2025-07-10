@@ -31,18 +31,22 @@ class FileIsBinaryError(Exception):
 
 class CaseAwareReplacer:
     def __init__(self, old_str, new_str, dry_run=False):
+        self._replacements = {}
+        self._delta = len(new_str) - len(old_str)
         self._old = old_str.split('/')
         self._new = new_str.split('/')
-        self._replacements = {}
         self._dry_run = dry_run
         self._pattern = re.compile(RE_BOUNDARIES.join([f"({x})" for x in self._old]), re.IGNORECASE)
 
-    @functools.cache
-    def len_difference(self):
-       return len(self._new) - len(self._old)
-
     def get_replacements_made(self):
         return self._replacements
+
+    def iter_replace_paths(self, paths: list[Path]):
+        def sort_by_length(path: Path):
+            return (len(path.parts), len(path.name) * self._delta)
+
+        for old_path in sorted(paths, key=sort_by_length, reverse=True):
+            yield old_path, self.replace_path(old_path)
 
     def replace(self, base_str: str):
         def replacer(match):

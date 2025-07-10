@@ -6,9 +6,6 @@ from rich.live import Live
 from rich.table import Table
 import os, typer
 
-app = typer.Typer()
-replacer = None
-
 def get_all_paths_to_replace(path: Path):
     file_objects: list[Path] = []
 
@@ -18,10 +15,9 @@ def get_all_paths_to_replace(path: Path):
         file_objects += [root_path / f for f in file_names if not f.startswith('.')] \
                       + [root_path / d for d in dir_names]
 
-    # Sort in a way so that no conflicts occur
-    file_objects.sort(key=lambda x: (len(x.parts), len(x.name) * replacer.len_difference()), reverse=True)
-
     return file_objects
+
+app = typer.Typer()
 
 @app.command()
 def drename(
@@ -42,13 +38,12 @@ def drename(
         testMyUser -> wowVeryNice\n
         TEST_MY_USER -> WOW_VERY_NICE\n
     """
-    global replacer
-
     if old == new:
         print("[red]Old and new are the same. No actions will be taken.[/]")
         raise typer.Exit(code=1)
 
     replacer = CaseAwareReplacer(old, new, dry_run=dry)
+    paths = get_all_paths_to_replace(path)
 
     table = Table()
     table.add_column("Type")
@@ -56,8 +51,7 @@ def drename(
     table.add_column("Errors")
 
     with Live(table, auto_refresh=False) as live:
-        for old_path in get_all_paths_to_replace(path):
-            new_path = replacer.replace_path(old_path)
+        for old_path, new_path in replacer.iter_replace_paths(paths):
             relative_old_path = old_path.relative_to(path)
             relative_new_path = new_path.relative_to(path)
             type_text = ""

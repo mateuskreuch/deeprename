@@ -28,6 +28,7 @@ class TestCafeAwareReplacer(unittest.TestCase):
         self.assertEqual(r.replace("user_NAME"), "account_ID")
         self.assertEqual(r.replace("USER-name"), "ACCOUNT-id")
         self.assertEqual(r.replace("USER-_-name"), "ACCOUNT-_-id")
+        self.assertEqual(r.replace("uSeR_nAmE"), "account_id")
 
     def test_replacement_expansion(self):
         r_multi = CaseAwareReplacer("the/url/is", "the/uniform/resource/is")
